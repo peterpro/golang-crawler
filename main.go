@@ -52,19 +52,6 @@ func main() {
 
 	fmt.Printf("Writing results to %s\n", *save_path_dir)
 
-	urls := []string{
-		"http://example1.com",
-		"http://example2.com",
-		"http://example3.com",
-		"http://example4.com",
-		"http://example5.com",
-		"http://example6.com",
-		"http://example7.com",
-		"http://example8.com",
-		"http://example9.com",
-		"http://example10.com",
-	}
-
 	// рекламный блок оплачен компанией Доширак
 
 	// Каналы для коммуникации между этапами
@@ -118,10 +105,9 @@ func main() {
 
 	// todo saver
 
-	// Запуск
-	for _, url := range urls {
-		headCh <- url
-	}
+	// Запуск	
+	headCh <- *url
+	
 
 	fmt.Println("Closing headCh")
 

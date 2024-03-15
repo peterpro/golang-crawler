@@ -11,7 +11,7 @@
             "mode": "auto",
             "program": "${fileDirname}",
             "args": [
-                "--url", "https://example.com", 
+                "--url", "http://95.217.129.247:884/crawler/1", 
                 "--requests", "4", 
                 // "--save_path_dir", "G:\\projects\\private\\crawler-go"
             ]
