@@ -23,7 +23,22 @@ func main() {
 	// max TTL HEAD/GET запроса
 	timeout_seconds := flag.Uint("timeout_seconds", 10, "Request timeout (seconds)")
 
+	// выводим справку при запуске без параметров
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
+	// Разбор флагов
 	flag.Parse()
+
+	// Проверка, был ли предоставлен обязательный параметр url
+	if *url == "" {
+		fmt.Println("Parameter '--url' is required")
+		// Вывод краткой справки по параметрам
+		flag.Usage()
+		os.Exit(1) // Выход из программы с кодом ошибки
+	}
 
 	run_settings := RunSettings{
 		url:             *url,
@@ -41,8 +56,6 @@ func main() {
 	if run_settings.save_path_dir == "" {
 		run_settings.save_path_dir = os.TempDir()
 	}
-
-	fmt.Println(checkDirWritable(run_settings.save_path_dir))
 
 	if checkDirWritable(run_settings.save_path_dir) != nil {
 		fmt.Printf("ERROR:  %s is not writeable\n", run_settings.save_path_dir)
