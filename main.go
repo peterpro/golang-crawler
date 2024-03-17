@@ -1,131 +1,101 @@
 package main
 
+// рекламный блок оплачен компанией Доширак
+
 import (
 	"flag" // CLI parameters
 	"fmt"  // i/o
 	"os"
 	"sync"
-	"time"
 )
-
-// Dummy типы для демонстрации
-type Document struct {
-	URL         string
-	q_retries   uint
-	q_redirects uint
-	body        string
-}
-
-type ParsedDocument struct {
-	Document
-	Links []string
-}
 
 func main() {
 
-	//
-	fmt.Println("Hello world!")
-
+	// входная точка
 	url := flag.String("url", "", "Url startpoint")
-	save_path_dir := flag.String("save_path_dir", "", "Path to save")
-	requests := flag.Uint("requests", 1, "Max parallel requests")
-	timeout_seconds := flag.Uint("timeout_seconds", 10, "Request timeout (seconds)")
 
-	// @improvement: flag: max file size (на случай бесконечного потока)
+	// куда сохраняем (по умлолчанию - TMPDIR OS)
+	save_path_dir := flag.String("save_path_dir", "", "Path to save")
+
+	// сколько GET-запросов одновременно
+	requests := flag.Uint("requests", 1, "Max parallel requests")
+
+	// max TTL HEAD/GET запроса
+	timeout_seconds := flag.Uint("timeout_seconds", 10, "Request timeout (seconds)")
 
 	flag.Parse()
 
-	fmt.Println("URL: ", *url)
-	fmt.Println("parallel requests: ", *requests)
-	fmt.Println("request timeout: ", *timeout_seconds, "secs.")
-
-	if *save_path_dir == "" {
-		*save_path_dir = os.TempDir()
+	run_settings := RunSettings{
+		url:             *url,
+		save_path_dir:   *save_path_dir,
+		requests:        *requests,
+		timeout_seconds: *timeout_seconds,
+		max_redirects:   3,
+		max_retries:     3,
 	}
 
-	fmt.Println(checkDirWritable(*save_path_dir))
+	// @improvement: flag: max file size (на случай бесконечного потока)
 
-	if checkDirWritable(*save_path_dir) != nil {
-		fmt.Printf("ERROR:  %s is not writeable\n", *save_path_dir)
+	fmt.Println("Run settings: ", run_settings)
+
+	if run_settings.save_path_dir == "" {
+		run_settings.save_path_dir = os.TempDir()
+	}
+
+	fmt.Println(checkDirWritable(run_settings.save_path_dir))
+
+	if checkDirWritable(run_settings.save_path_dir) != nil {
+		fmt.Printf("ERROR:  %s is not writeable\n", run_settings.save_path_dir)
 		return
 	}
 
-	fmt.Printf("Writing results to %s\n", *save_path_dir)
-
-	// рекламный блок оплачен компанией Доширак
+	fmt.Printf("Writing results to %s\n", run_settings.save_path_dir)
 
 	// Каналы для коммуникации между этапами
-	headCh := make(chan string, 2)   // URL для HEAD-запросов
-	getCh := make(chan Document, 10) // Документы для GET-запросов
-	downCh := make(chan Document, 2) // Документы для загрузчика
+	headCh := make(chan Document, run_settings.requests*1000) // URL для HEAD-запросов
+	getCh := make(chan Document, run_settings.requests*1000)  // Документы для GET-запросов
+
+	// кэш - чтобы не скачивать ссылку 10 раз
+	cache := NewCache()
+
+	// счетчик синхронизации каналов для HEAD/GET-запросов
+	counter := NewCounter(headCh, getCh)
 
 	// HEAD-запросы
-	// todo обработка кодов ошибок
-	// todo кэш пройденного
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := 0; i < int(run_settings.requests); i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for url := range headCh {
-				fmt.Println("HEAD request to", url)
-				fmt.Println(fetchHeadHeaders(url))
-				time.Sleep(100 * time.Millisecond) 
-
-				getCh <- Document{URL: url}
+			for doc := range headCh {
+				_, err := processHead(doc, headCh, getCh, run_settings, cache, counter)
+				if err != nil {
+					counter.Decrement()
+					fmt.Println("HEAD terminated ", doc.URL, err)
+				}
 			}
 		}()
 	}
 
 	// GET-запросы
-	// todo: paralellize
-	// todo обработка кодов ошибок
 	var wg2 sync.WaitGroup
-	wg2.Add(1)
-	go func() {
-		defer wg2.Done()
-		for doc := range getCh {
-			fmt.Println("GET request to", doc.URL, len(headCh), len(getCh), len(downCh))
-			time.Sleep(2000 * time.Millisecond)
+	for i := 0; i < int(run_settings.requests); i++ {
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			for doc := range getCh {
+				_, err := processGet(doc, headCh, run_settings, cache, counter)
+				if err != nil {
+					counter.Decrement()
+					fmt.Println("GET terminated ", doc.URL, err)
+				}
+			}
+		}()
+	}
 
-			downCh <- doc
-		}
-	}()
-
-	// parser
-	// todo: paralellize
-	var wg3 sync.WaitGroup
-	wg3.Add(1)
-	go func() {
-		defer wg3.Done()
-		for doc := range downCh {
-			fmt.Println("Parsing", doc.URL, len(headCh), len(getCh), len(downCh))
-		}
-	}()
-
-	// todo saver
-
-	// Запуск	
-	headCh <- *url
-	
-
-	fmt.Println("Closing headCh")
-
-	// Закрытие канала headCh, чтобы горутина с HEAD-запросами завершилась после обработки всех URL
-	close(headCh)
-
-	fmt.Println("wgWait #1")
-
-	wg.Wait() // ждем завершения горутины с headCh
-
-	fmt.Println("Closing getCh")
-
-	// после выполнения headCh обработчика и закрытия headCh, мы закрываем getCh
-	close(getCh)
-
-	fmt.Println("wgWait #2")
-
-	wg2.Wait() // Ждем завершения горутины с getCh
-
-	fmt.Println("Crawling finished.")
+	// Запуск
+	counter.Increment() // первый документ - первый инкремент
+	headCh <- Document{URL: *url}
+	wg2.Wait()
+	fmt.Println("Site succesfully processed!")
 }
